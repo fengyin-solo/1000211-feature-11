@@ -33,3 +33,13 @@ body { margin: 0; background: #f6f8fb; color: #1f2937; }
 .link { border: none; background: none; color: var(--brand); cursor: pointer; padding: 0; }
 .page-foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: var(--muted); }
 .error-text { color: #b42318; }
+.queue-panel { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+.queue-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.queue-head h3 { margin: 0 0 4px; font-size: 15px; }
+.queue-side { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.queue-count { font-size: 12px; color: var(--muted); }
+.queue-group { border: 1px solid var(--border); border-radius: 6px; margin-top: 10px; overflow: hidden; }
+.queue-group-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: #f8fafc; }
+.queue-group-head strong { flex: 1; }
+.queue-group .data-table input { width: 100%; border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font-size: 13px; }
+.queue-message { margin: 10px 0 0; font-size: 13px; color: var(--brand); }
