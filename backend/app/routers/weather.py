@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
+from app.schemas import ActionResult, EntryPayload, FillQueuePayload, PageResult
 from app.services.weather import WeatherService
 
 router = APIRouter(prefix="/api/weather", tags=["气象监测"])
@@ -28,6 +28,20 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/fill-queue")
+def fill_queue(
+    station: str | None = Query(default=None, description="按站点编号过滤待补队列"),
+) -> dict[str, Any]:
+    """生成待补队列：缺辐照度、风速或风向的记录按站点归组，附剩余数量与异常数量。"""
+    return service.fill_queue(station=station)
+
+
+@router.post("/fill-queue/commit")
+def commit_fill_queue(payload: FillQueuePayload) -> dict[str, Any]:
+    """整组补录：逐条写入，缺站点编号的行退回、其余行继续；同一 request_id 只生效一次。"""
+    return service.commit_fill_queue(rows=payload.rows, request_id=payload.request_id)
 
 
 @router.get("/{entry_id}", response_model=dict)

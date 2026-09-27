@@ -12,11 +12,76 @@
     </header>
 
     <div class="stat-row">
-      <article v-for="item in stats" :key="item.label" class="stat-card">
-        <span class="stat-label">{{ item.label }}</span>
-        <strong class="stat-value">{{ item.value }}</strong>
+      <article class="stat-card">
+        <span class="stat-label">待补数量</span>
+        <strong class="stat-value">{{ remaining }}</strong>
+      </article>
+      <article class="stat-card">
+        <span class="stat-label">异常数量</span>
+        <strong class="stat-value">{{ abnormal }}</strong>
       </article>
     </div>
+
+    <section class="fill-queue">
+      <header class="page-head">
+        <div>
+          <h3>待补队列</h3>
+          <p class="page-desc">按站点生成待补队列，整组逐条补录辐照度、风速或风向；缺站点编号的行会被退回。</p>
+        </div>
+        <div class="page-actions">
+          <select v-model="station" class="station-select" @change="reloadQueue">
+            <option value="">全部站点</option>
+            <option v-for="item in stations" :key="item" :value="item">{{ item }}</option>
+          </select>
+          <button class="btn" type="button" @click="reloadQueue">生成待补队列</button>
+          <button
+            class="btn primary"
+            type="button"
+            :disabled="submitting || !queueRows.length"
+            @click="submitQueue"
+          >
+            {{ submitting ? '提交中…' : '提交整组补录' }}
+          </button>
+        </div>
+      </header>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>站点编号</th>
+            <th>记录时间</th>
+            <th>缺项</th>
+            <th>辐照度</th>
+            <th>风速</th>
+            <th>风向</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(row, index) in queueRows" :key="row.id ?? `new-${index}`">
+            <td><input v-model="row.站点编号" placeholder="必填" /></td>
+            <td>{{ row.记录时间 || '—' }}</td>
+            <td>{{ row.缺项.join('、') || '—' }}</td>
+            <td><input v-model="row.辐照度" placeholder="补录辐照度" /></td>
+            <td><input v-model="row.风速" placeholder="补录风速" /></td>
+            <td><input v-model="row.风向" placeholder="补录风向" /></td>
+          </tr>
+          <tr v-if="!queueRows.length">
+            <td colspan="6" class="empty-state">当前站点没有待补记录</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <footer class="page-foot">
+        <span v-if="queueMessage">{{ queueMessage }}</span>
+        <span v-else>共 {{ queueRows.length }} 条待补记录</span>
+      </footer>
+
+      <ul v-if="rejectedRows.length" class="reject-list">
+        <li v-for="(item, index) in rejectedRows" :key="index" class="error-text">
+          第 {{ index + 1 }} 条（记录时间 {{ item.row.记录时间 || '—' }}）：{{ item.reason }}
+        </li>
+      </ul>
+    </section>
 
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
@@ -69,17 +134,44 @@ import { request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
 
+type QueueRow = {
+  id: number | null
+  站点编号: string
+  辐照度: string
+  风速: string
+  风向: string
+  记录时间: string
+  缺项: string[]
+}
+
+type RejectedRow = { row: QueueRow; reason: string }
+
 const ENDPOINT = '/api/weather'
 const columns = ["站点编号", "辐照度", "风速", "风向", "气温", "湿度", "降雨量", "记录时间"]
 const actions = ["发布预警", "升级预警", "解除预警"]
-const statuses = ["正常", "大风预警", "暴雨预警", "冰雹预警"]
-const stats = [{"label": "当前辐照", "value": 0}, {"label": "今日峰值", "value": 0}, {"label": "预警次数", "value": 0}]
 
 const rows = ref<Row[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+
+const stations = ref<string[]>([])
+const station = ref('')
+const queueRows = ref<QueueRow[]>([])
+const remaining = ref(0)
+const abnormal = ref(0)
+const submitting = ref(false)
+const queueMessage = ref('')
+const rejectedRows = ref<RejectedRow[]>([])
+// 每次重新生成队列都会换新的 requestId；同一整组动作重复提交时键不变，服务端只保留一份结果
+let requestId = newRequestId()
+
+function newRequestId(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `fill-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
 
 function resetFilters() {
   filters.value = {}
@@ -110,6 +202,61 @@ async function runAction(action: string, row: Row) {
   }
 }
 
+async function loadQueue() {
+  const query = station.value ? `?station=${encodeURIComponent(station.value)}` : ''
+  const response = await request(`${ENDPOINT}/fill-queue${query}`)
+  if (!response.ok) {
+    throw new Error('待补队列读取失败')
+  }
+  const payload = await response.json()
+  stations.value = payload.stations ?? []
+  queueRows.value = (payload.items ?? []) as QueueRow[]
+  remaining.value = payload.remaining ?? 0
+  abnormal.value = payload.abnormal ?? 0
+  requestId = newRequestId()
+}
+
+async function reloadQueue() {
+  errorMessage.value = ''
+  queueMessage.value = ''
+  rejectedRows.value = []
+  try {
+    await loadQueue()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '待补队列读取失败'
+  }
+}
+
+async function submitQueue() {
+  if (submitting.value || !queueRows.value.length) {
+    return
+  }
+  submitting.value = true
+  errorMessage.value = ''
+  queueMessage.value = ''
+  try {
+    const response = await request(`${ENDPOINT}/fill-queue/commit`, {
+      method: 'POST',
+      body: JSON.stringify({ request_id: requestId, rows: queueRows.value }),
+    })
+    if (!response.ok) {
+      throw new Error('整组补录提交失败，请稍后重试')
+    }
+    const payload = await response.json()
+    // 剩余数量与异常数量以服务端重算结果为准，同时更新
+    remaining.value = payload.remaining ?? 0
+    abnormal.value = payload.abnormal ?? 0
+    rejectedRows.value = (payload.rejected ?? []) as RejectedRow[]
+    queueMessage.value = payload.message ?? '整组补录完成'
+    await loadQueue()
+    await reload()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '整组补录提交失败'
+  } finally {
+    submitting.value = false
+  }
+}
+
 async function reload() {
   errorMessage.value = ''
   const query = new URLSearchParams(filters.value as Record<string, string>).toString()
@@ -126,5 +273,38 @@ async function reload() {
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  void reloadQueue()
+  void reload()
+})
 </script>
+
+<style scoped>
+.fill-queue {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+.fill-queue h3 {
+  margin: 0;
+}
+.station-select {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: #fff;
+}
+.fill-queue input {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  width: 100%;
+}
+.reject-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+</style>

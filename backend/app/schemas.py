@@ -28,6 +28,13 @@ class EntryPayload(BaseModel):
     remark: str | None = None
 
 
+class FillQueuePayload(BaseModel):
+    """整组补录提交：rows 为逐条补录内容，request_id 用于同一整组动作的幂等去重。"""
+
+    request_id: str | None = None
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
 
 class PlantEntry(BaseModel):
     """光伏电站明细结构。"""
